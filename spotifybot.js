@@ -25,7 +25,9 @@ var bot = controller.spawn({
     token: setup.token
 }).startRTM();
 
-
+var lastRequest = false;
+var requestQueue = [];
+var requestQueueListner = false;
 
 var init = function init() {
     bot.api.channels.list({}, function (err, response) {
@@ -61,6 +63,36 @@ var init = function init() {
     });
 };
 
+function enQueue(track){
+    requestQueue.push(track.track);
+    // since there is no song end event listner, create an interval to check that we are still playing "our" song
+    requestQueueListner = setInterval(function(){
+        // get the currently playing track
+        Spotify.getTrack(function (err, track) {
+            var playingFromQueue = true;
+            if (track) {
+                // if track isnt requested, play the next requested
+                if(track.track !== lastRequest || requestQueue.indexOf(track.track) === -1){
+                    playingFromQueue = false;
+                }
+            }
+            // if we arent playing from the request queue, play from queue
+            if(!playingFromQueue && requestQueue.length){
+                Spotify.playTrack(requestQueue[0], function(){});
+                lastRequest = requestQueue[0];
+                requestQueue.shift();
+            }
+            // no more queue and not queued, kill the listners
+            if(!requestQueue.length && !playingFromQueue){
+                lastRequest = false;
+                clearInterval(requestQueueListner);
+                requestQueueListner = false;
+            }
+        });
+
+    },1000);
+}
+
 
 controller.hears(['request'], 'direct_message,direct_mention,mention', function (bot, message) {
     var qry = message.text;
@@ -79,8 +111,18 @@ controller.hears(['request'], 'direct_message,direct_mention,mention', function 
                     };
                     bot.reply(message, ':headphones: found "' + tk.artist + ' - ' + tk.name + '"\r\n' + tk.img);
 
-                    Spotify.playTrack(tk.track, function(){
-                    });
+                    //Spotify.playTrack(tk.track, function(){});
+
+                    // is there a currently active queue
+                    if(lastRequest || requestQueue.length){
+                        enQueue(tk);
+                        bot.reply(message, ':headphones: found and queued "' + tk.artist + ' - ' + tk.name + '"\r\n' + tk.img);
+                    } else {
+                        // no queue, just play song
+                        bot.reply(message, ':headphones: found "' + tk.artist + ' - ' + tk.name + '"\r\n' + tk.img);
+                        Spotify.playTrack(tk.track, function(){});
+                    }
+                    lastRequest = tk.track;
 
                 } else {
                     bot.reply(message, 'Sorry, found nothing');
